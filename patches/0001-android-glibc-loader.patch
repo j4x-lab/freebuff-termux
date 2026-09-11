@@ -1,0 +1,61 @@
+--- a/launcher.js
++++ b/launcher.js
+@@ -277,6 +277,13 @@
+       }
+     }
+ 
++    // freebuff-termux: Node reports platform 'android' on Termux, which has
++    // no matching binary. Alias to linux-arm64 (glibc) — the launcher spawns
++    // it via the explicit glibc loader, see spawnInstalledBinary.
++    if (process.platform === 'android' && PLATFORM_TARGETS['linux-arm64']) {
++      return 'linux-arm64'
++    }
++
+     return null
+   }
+ 
+@@ -1224,6 +1231,23 @@
+     process.exit(1)
+   }
+ 
++  // freebuff-termux: on Android/Termux the glibc binary cannot exec directly
++  // (no /lib loader, and patchelf breaks Bun single-file payloads). Spawn it
++  // through the explicit glibc loader instead. Override via
++  // FREEBUFF_GLIBC_LOADER / FREEBUFF_GLIBC_LIB.
++  function getTermuxLoader() {
++    if (process.platform !== 'android') return null
++    const prefix =
++      process.env.PREFIX || '/data/data/com.termux/files/usr'
++    const lib =
++      process.env.FREEBUFF_GLIBC_LIB || `${prefix}/glibc/lib`
++    const loader =
++      process.env.FREEBUFF_GLIBC_LOADER ||
++      `${lib}/ld-linux-aarch64.so.1`
++    if (!fs.existsSync(loader)) return null
++    return { loader, lib }
++  }
++
+   function spawnInstalledBinary(options = {}) {
+     if (!fs.existsSync(CONFIG.binaryPath)) {
+       try {
+@@ -1246,7 +1270,19 @@
+     let child
+     try {
+       const { env: optionEnv, ...spawnOptions } = options
+-      child = spawn(CONFIG.binaryPath, process.argv.slice(2), {
++      const termuxLoader = getTermuxLoader()
++      const bin = termuxLoader
++        ? termuxLoader.loader
++        : CONFIG.binaryPath
++      const args = termuxLoader
++        ? [
++            '--library-path',
++            termuxLoader.lib,
++            CONFIG.binaryPath,
++            ...process.argv.slice(2),
++          ]
++        : process.argv.slice(2)
++      child = spawn(bin, args, {
+         // stdin/stdout stay inherited — the TUI owns the terminal and must see
+         // a real tty. stderr is teed on Windows only; see watchLaunch.
+         stdio:
