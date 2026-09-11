@@ -1,8 +1,15 @@
 # Step 2 · Version — resolve which wrapper version to install.
 step 2 $TOTAL_STEPS "resolve version"
 
-# capture the currently-installed wrapper BEFORE we replace it (done report)
-PREV_FB_VER="$(freebuff --version 2>/dev/null || echo "none")"
+# read the installed wrapper version WITHOUT executing the binary:
+# `freebuff --version` spawns the 130MB binary (first run downloads it),
+# so probing it here is slow and can race step 5. package.json is instant.
+if [[ -f "$MOD_DIR/package.json" ]]; then
+  PREV_FB_VER="$(node -p "require('$MOD_DIR/package.json').version" 2>/dev/null || echo "none")"
+  [[ -n "$PREV_FB_VER" ]] || PREV_FB_VER="none"
+else
+  PREV_FB_VER="none"
+fi
 
 if [[ "$VER" == "latest" ]]; then
   FB_VER="$(npm view freebuff version 2>/dev/null || echo "")"
