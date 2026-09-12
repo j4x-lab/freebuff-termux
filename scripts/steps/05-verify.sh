@@ -18,4 +18,11 @@ export GOT_VER
 log "binary reports v$GOT_VER"
 freebuff --help >/dev/null 2>&1 || die "freebuff --help failed"
 
+# TUI regression guard: under the explicit glibc loader, Bun's execPath is
+# the loader, so the sibling tree-sitter.wasm lookup used to miss and the TUI
+# fell back to a CDN download via curl (which then failed on the leaked
+# LD_LIBRARY_PATH). The launcher patch covers both; fail here if it regresses.
+freebuff --smoke-tree-sitter >/dev/null 2>&1 \
+  || die "tree-sitter smoke failed — run: freebuff --smoke-tree-sitter"
+
 step_done 0

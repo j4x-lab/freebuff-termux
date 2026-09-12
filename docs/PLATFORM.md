@@ -40,10 +40,41 @@ it were tried:
 - **Explicit loader** (works, this repo's approach): the pristine binary runs
   clean —
   `$PREFIX/glibc/lib/ld-linux-aarch64.so.1 --library-path $PREFIX/glibc/lib
-  ~/.config/manicode/freebuff --help` → full help, rc=0.
-  The patch makes the launcher spawn exactly that argv on android. No root,
-  no `/lib` symlink, binary untouched (survives launcher integrity logic;
-  only wiped by npm updates — see `make patch`).
+   ~/.config/manicode/freebuff --help` → full help, rc=0.
+   The patch makes the launcher spawn exactly that argv on android. No root,
+   no `/lib` symlink, binary untouched (survives launcher integrity logic;
+   only wiped by npm updates — see `make patch`).
+
+## 4. TUI startup: `tree-sitter.wasm` CDN fallback + `curl` link failure
+
+Symptom: the TUI prints `[tree-sitter] tree-sitter.wasm missing;
+downloading …` for `https://cdn.jsdelivr.net/npm/web-tree-sitter@0.25.10/…`
+(or unpkg), then `CANNOT LINK EXECUTABLE "curl":
+"…/glibc/lib/libc.so" has bad ELF magic: 2f2a2047`. Two stacked causes:
+
+- **Wrong env, not a missing file.** The wasm ships next to the binary
+  (`~/.config/manicode/tree-sitter.wasm`), but under the explicit loader
+  Bun's `process.execPath` is `ld-linux-aarch64.so.1`, not the freebuff
+  binary — so the sibling lookup (pre-init scans `argv[0]`/`execPath`
+  siblings; runtime `locateFile` checks `dirname(execPath)`) misses and the
+  binary falls back to downloading via a `curl` child
+  (`execFileSync("curl", …)`). Verified with
+  `freebuff --smoke-tree-sitter`: `execPath=…/glibc/lib/ld-linux-…`,
+  `resolved siblingPath=<none>`. (`--argv0` does not help — Bun still
+  reports `argv[0]=bun`.) Fix: the patch exports
+  `CODEBUFF_TREE_SITTER_WASM_PATH` (the env hatch the binary checks first)
+  and best-effort seeds a copy at `$PREFIX/glibc/lib/tree-sitter.wasm`
+  for the env-blind pre-init scan (re-copied when sizes differ, so a glibc
+  reinstall self-heals on next launch). After the fix,
+  `--smoke-tree-sitter` reports `tree-sitter smoke ok (wasmBinary, …)`.
+- **`LD_LIBRARY_PATH` leak.** The first version of this patch pinned
+  `LD_LIBRARY_PATH` to the glibc lib dir. That breaks every Bionic child
+  the binary spawns: glibc's `libc.so` is a GNU ld *script*
+  (`/* GNU ld script …`, hence magic bytes `2f2a2047` = `/* G`), not ELF,
+  so Bionic `curl` aborts before main. Reproduces with
+  `LD_LIBRARY_PATH=$PREFIX/glibc/lib curl --version`. Fix: never set it —
+  `--library-path` already resolves the main binary — and strip any glibc
+  segment inherited from the environment instead.
 
 ## Kernel note
 

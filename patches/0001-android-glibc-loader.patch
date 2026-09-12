@@ -38,41 +38,76 @@
    function spawnInstalledBinary(options = {}) {
      if (!fs.existsSync(CONFIG.binaryPath)) {
        try {
-@@ -1246,17 +1270,40 @@
-     let child
-     try {
-       const { env: optionEnv, ...spawnOptions } = options
+@@ -1258,7 +1282,67 @@
+             ...process.argv.slice(2),
+           ]
+         : process.argv.slice(2)
 -      child = spawn(CONFIG.binaryPath, process.argv.slice(2), {
-+      const termuxLoader = getTermuxLoader()
-+      const bin = termuxLoader
-+        ? termuxLoader.loader
-+        : CONFIG.binaryPath
-+      const args = termuxLoader
-+        ? [
-+            '--library-path',
-+            termuxLoader.lib,
-+            CONFIG.binaryPath,
-+            ...process.argv.slice(2),
-+          ]
-+        : process.argv.slice(2)
 +      // freebuff-termux: strip the Bionic LD_PRELOAD (Termux sets
 +      // LD_PRELOAD=libtermux-exec.so globally). Leaking it into the glibc
 +      // loader aborts the child with "libc.so: invalid ELF header".
-+      // Pin LD_LIBRARY_PATH to the glibc lib dir for the same reason.
++      // NOTE: do NOT pin LD_LIBRARY_PATH to the glibc lib dir. The loader's
++      // --library-path arg already resolves the main binary, and leaking a
++      // glibc dir into LD_LIBRARY_PATH breaks every bionic child (curl,
++      // git, ssh) with: CANNOT LINK EXECUTABLE "curl":
++      // ".../glibc/lib/libc.so" has bad ELF magic: 2f2a2047 — glibc's
++      // libc.so is a text linker script (/* GNU ld script ...), not ELF.
++      // Strip any glibc segment instead so bionic children keep working.
 +      const childEnv = {
 +        ...process.env,
 +        ...optionEnv,
 +      }
 +      if (termuxLoader) {
 +        delete childEnv.LD_PRELOAD
-+        childEnv.LD_LIBRARY_PATH = termuxLoader.lib
++        if (childEnv.LD_LIBRARY_PATH) {
++          const parts = String(childEnv.LD_LIBRARY_PATH)
++            .split(':')
++            .filter(
++              (p) => p && p !== termuxLoader.lib && !p.includes('/glibc/'),
++            )
++          if (parts.length) childEnv.LD_LIBRARY_PATH = parts.join(':')
++          else delete childEnv.LD_LIBRARY_PATH
++        }
++        // freebuff-termux: under the explicit loader, Bun's process.execPath
++        // is the loader (ld-linux-aarch64.so.1), not the freebuff binary, so
++        // the sibling tree-sitter.wasm lookup misses and the TUI falls back
++        // to CDN download (unpkg/jsdelivr) via a `curl` child — which then
++        // fails on the env issue above. Point it at the real sibling via the
++        // env hatch the binary checks first (CODEBUFF_TREE_SITTER_WASM_PATH).
++        // Also seed a copy next to the loader so the binary's pre-init scan
++        // (argv[0]/execPath siblings, env-blind) hits too. Best effort only.
++        try {
++          const wasmPath = path.join(
++            path.dirname(CONFIG.binaryPath),
++            'tree-sitter.wasm',
++          )
++          if (
++            !childEnv.CODEBUFF_TREE_SITTER_WASM_PATH &&
++            fs.existsSync(wasmPath)
++          ) {
++            childEnv.CODEBUFF_TREE_SITTER_WASM_PATH = wasmPath
++          }
++          if (fs.existsSync(wasmPath)) {
++            const loaderWasm = path.join(termuxLoader.lib, 'tree-sitter.wasm')
++            let seed = false
++            try {
++              seed =
++                !fs.existsSync(loaderWasm) ||
++                fs.statSync(loaderWasm).size !== fs.statSync(wasmPath).size
++            } catch {
++              seed = true
++            }
++            if (seed) fs.copyFileSync(wasmPath, loaderWasm)
++          }
++        } catch {
++          // best effort — binary falls back to its default lookup
++        }
 +      }
 +      child = spawn(bin, args, {
          // stdin/stdout stay inherited — the TUI owns the terminal and must see
          // a real tty. stderr is teed on Windows only; see watchLaunch.
          stdio:
-           process.platform === 'win32'
-             ? ['inherit', 'inherit', 'pipe']
+@@ -1267,8 +1351,7 @@
              : ['inherit', 'inherit', 'inherit'],
          ...spawnOptions,
          env: {
