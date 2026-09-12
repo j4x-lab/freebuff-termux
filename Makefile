@@ -9,7 +9,7 @@ IS_ANDROID := $(shell bash -c '[ -n "$${TERMUX_VERSION:-}" ] || ( [ -n "$${PREFI
 VER ?= latest
 REFRESH ?= 0
 
-.PHONY: help install update patch verify status selfcheck
+.PHONY: help install update patch verify status selfcheck mcp
 
 help:
 	@echo "freebuff-termux helper"
@@ -26,6 +26,7 @@ help:
 	@echo "  make verify               # smoke-test the installed binary"
 	@echo "  make status               # show wrapper / binary / patch state"
 	@echo "  make selfcheck            # confirm patches present + binary execs"
+	@echo "  make mcp                  # write ~/.agents/mcp.json (engram+graphify) + smoke-test"
 
 install:
 	@VER="$(VER)" REFRESH="$(REFRESH)" bash ./install.sh
@@ -48,3 +49,6 @@ selfcheck:
 	grep -q "freebuff-termux" "$$MOD" || { echo "selfcheck: patches MISSING (make patch)"; exit 1; }; \
 	freebuff --version >/dev/null 2>&1 || { echo "selfcheck: binary does not run"; exit 1; }; \
 	echo "selfcheck: patches applied OK, binary runs OK"
+
+mcp:
+	@bash ./scripts/setup-mcp.sh
