@@ -38,7 +38,7 @@
    function spawnInstalledBinary(options = {}) {
      if (!fs.existsSync(CONFIG.binaryPath)) {
        try {
-@@ -1246,7 +1270,19 @@
+@@ -1246,17 +1270,40 @@
      let child
      try {
        const { env: optionEnv, ...spawnOptions } = options
@@ -55,7 +55,30 @@
 +            ...process.argv.slice(2),
 +          ]
 +        : process.argv.slice(2)
++      // freebuff-termux: strip the Bionic LD_PRELOAD (Termux sets
++      // LD_PRELOAD=libtermux-exec.so globally). Leaking it into the glibc
++      // loader aborts the child with "libc.so: invalid ELF header".
++      // Pin LD_LIBRARY_PATH to the glibc lib dir for the same reason.
++      const childEnv = {
++        ...process.env,
++        ...optionEnv,
++      }
++      if (termuxLoader) {
++        delete childEnv.LD_PRELOAD
++        childEnv.LD_LIBRARY_PATH = termuxLoader.lib
++      }
 +      child = spawn(bin, args, {
          // stdin/stdout stay inherited — the TUI owns the terminal and must see
          // a real tty. stderr is teed on Windows only; see watchLaunch.
          stdio:
+           process.platform === 'win32'
+             ? ['inherit', 'inherit', 'pipe']
+             : ['inherit', 'inherit', 'inherit'],
+         ...spawnOptions,
+         env: {
+-          ...process.env,
+-          ...optionEnv,
++          ...childEnv,
+           CODEBUFF_LAUNCHER_PID: String(process.pid),
+         },
+       })
